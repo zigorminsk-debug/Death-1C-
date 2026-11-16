@@ -3,7 +3,7 @@
 package platform
 
 import (
-	_ "embed"
+	"embed"
 	"io"
 	"os"
 	"os/exec"
@@ -14,8 +14,8 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-//go:embed opengl32.dll
-var mesaDLL []byte
+//go:embed mesa_dlls/*.dll
+var mesaDLLs embed.FS
 
 func needsMesa() bool {
 	if os.Getenv("DEATH1C_MESA_LAUNCHED") == "1" {
@@ -50,11 +50,13 @@ func needsMesa() bool {
 }
 
 // InitMesaIfRequired detects if the app is running on Windows Server or RDP,
-// and extracts the bundled Mesa3D software renderer (opengl32.dll) to ensure Fyne launches.
+// and extracts the bundled Mesa3D software renderer and its dependencies to ensure Fyne launches.
 func InitMesaIfRequired() {
-	if len(mesaDLL) == 0 {
-		return // Not bundled (e.g. local dev build)
+	files, err := mesaDLLs.ReadDir("mesa_dlls")
+	if err != nil || len(files) == 0 {
+		return // Not bundled (e.g. local dev build without mesa_dlls)
 	}
+
 	if !needsMesa() {
 		return
 	}
@@ -68,11 +70,12 @@ func InitMesaIfRequired() {
 		return
 	}
 
-	dllPath := filepath.Join(binDir, "opengl32.dll")
-	// Overwrite to ensure it's up to date
-	err = os.WriteFile(dllPath, mesaDLL, 0644)
-	if err != nil {
-		return
+	for _, file := range files {
+		data, err := mesaDLLs.ReadFile("mesa_dlls/" + file.Name())
+		if err == nil {
+			dllPath := filepath.Join(binDir, file.Name())
+			os.WriteFile(dllPath, data, 0644)
+		}
 	}
 
 	currentExe, err := os.Executable()
@@ -84,6 +87,8 @@ func InitMesaIfRequired() {
 	
 	if strings.EqualFold(currentExe, newExePath) {
 		os.Setenv("DEATH1C_MESA_LAUNCHED", "1")
+		os.Setenv("GALLIUM_DRIVER", "llvmpipe")
+		os.Setenv("LIBGL_ALWAYS_SOFTWARE", "1")
 		return
 	}
 
@@ -104,10 +109,21 @@ func InitMesaIfRequired() {
 		}
 	}
 
-	// Relaunch from the new directory so the OS Loader prefers the local opengl32.dll
+	// Relaunch from the new directory so the OS Loader prefers the local opengl32.dll and its dependencies
 	cmd := exec.Command(newExePath, os.Args[1:]...)
-	cmd.Env = append(os.Environ(), "DEATH1C_MESA_LAUNCHED=1")
+	env := os.Environ()
+	env = append(env, "DEATH1C_MESA_LAUNCHED=1")
+	env = append(env, "GALLIUM_DRIVER=llvmpipe")
+	env = append(env, "LIBGL_ALWAYS_SOFTWARE=1")
+	cmd.Env = env
 	cmd.Dir, _ = os.Getwd()
+	
+	// Create startup.log to catch any child process stdout/stderr
+	logFile, _ := os.Create(filepath.Join(binDir, "startup.log"))
+	if logFile != nil {
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+	}
 
 	if err := cmd.Start(); err == nil {
 		os.Exit(0)

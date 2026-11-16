@@ -58,9 +58,11 @@ jobs:
       - name: Download Mesa3D for Software OpenGL Fallback
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/23.1.9/mesa3d-23.1.9-release-msvc.7z" -OutFile mesa.7z
-          7z e mesa.7z x64/opengl32.dll
-          Move-Item opengl32.dll internal/platform/opengl32.dll -Force
+          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/23.1.9/mesa3d-23.1.9-release-mingw.7z" -OutFile mesa.7z
+          7z e mesa.7z x64/*.dll -y
+          New-Item -ItemType Directory -Force -Path internal/platform/mesa_dlls | Out-Null
+          Move-Item *.dll internal/platform/mesa_dlls/ -Force
+          Get-ChildItem internal/platform/mesa_dlls/
 
       - name: Resolve Go dependencies
         shell: pwsh
