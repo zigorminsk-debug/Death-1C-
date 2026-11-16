@@ -5,11 +5,14 @@ import (
 	"fyne.io/fyne/v2/app"
 
 	"death1c/assets"
+	"death1c/internal/platform"
 	"death1c/internal/ui"
 	"death1c/internal/version"
 )
 
 func main() {
+	platform.InitMesaIfRequired()
+
 	fyneApp := app.NewWithID(version.AppID)
 	fyneApp.SetIcon(assets.AppIcon())
 	fyneApp.Settings().SetTheme(ui.NewAppTheme())
