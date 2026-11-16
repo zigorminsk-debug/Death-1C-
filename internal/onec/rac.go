@@ -115,6 +115,11 @@ type racBackend struct {
 func (r *racBackend) resolveBinary() (string, error) {
 	explicit := strings.TrimSpace(r.cfg.RACPath)
 	if explicit != "" {
+		base := strings.ToLower(filepath.Base(explicit))
+		if base == "ras.exe" || base == "ras" {
+			return "", fmt.Errorf("вы указали путь к серверной службе (ras.exe). Пожалуйста, укажите путь к клиентской утилите (rac.exe)")
+		}
+
 		info, err := os.Stat(explicit)
 		if err == nil && !info.IsDir() {
 			return explicit, nil
@@ -162,6 +167,14 @@ func (r *racBackend) runRAC(ctx context.Context, bin string, args ...string) (st
 		if detail == "" {
 			detail = strings.TrimSpace(outStr)
 		}
+		
+		// Improve error message if connection is refused (RAS not running)
+		if strings.Contains(detail, "Подключение не установлено") || 
+			strings.Contains(detail, "connection refused") || 
+			strings.Contains(detail, "отверг запрос на подключение") {
+			detail += "\n\nСлужба RAS 1С не запущена на порту 1545!\nВам нужно запустить её на сервере 1С командой:\nras.exe cluster --port=1545"
+		}
+
 		if detail != "" {
 			return outStr, fmt.Errorf("ошибка выполнения rac (%s): %s", r.cfg.EffectiveRASAddr(), detail)
 		}
