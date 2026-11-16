@@ -4,11 +4,12 @@ package platform
 
 import (
 	_ "embed"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
-	"unsafe"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -17,6 +18,10 @@ import (
 var mesaDLL []byte
 
 func needsMesa() bool {
+	if os.Getenv("DEATH1C_MESA_LAUNCHED") == "1" {
+		return false
+	}
+
 	// 1. Check if forced via env
 	if os.Getenv("DEATH1C_MESA") == "1" {
 		return true
@@ -70,9 +75,58 @@ func InitMesaIfRequired() {
 		return
 	}
 
-	// SetDllDirectoryW will inject binDir to the front of the DLL search path
-	kernel32 := syscall.NewLazyDLL("kernel32.dll")
-	setDllDir := kernel32.NewProc("SetDllDirectoryW")
-	p, _ := syscall.UTF16PtrFromString(binDir)
-	setDllDir.Call(uintptr(unsafe.Pointer(p)))
+	currentExe, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	newExePath := filepath.Join(binDir, filepath.Base(currentExe))
+	
+	if strings.EqualFold(currentExe, newExePath) {
+		os.Setenv("DEATH1C_MESA_LAUNCHED", "1")
+		return
+	}
+
+	statSrc, errSrc := os.Stat(currentExe)
+	statDst, errDst := os.Stat(newExePath)
+	needsCopy := errSrc == nil && (errDst != nil || statSrc.Size() != statDst.Size() || statSrc.ModTime().After(statDst.ModTime()))
+
+	if needsCopy {
+		os.Remove(newExePath) // Try to remove old one if it exists
+		err = copyFile(currentExe, newExePath)
+		if err != nil {
+			// Fallback: copy to a temporary name
+			newExePath = filepath.Join(binDir, "Death-1C-tmp.exe")
+			os.Remove(newExePath)
+			if copyFile(currentExe, newExePath) != nil {
+				return // Failed to copy, fallback to normal launch (which might crash)
+			}
+		}
+	}
+
+	// Relaunch from the new directory so the OS Loader prefers the local opengl32.dll
+	cmd := exec.Command(newExePath, os.Args[1:]...)
+	cmd.Env = append(os.Environ(), "DEATH1C_MESA_LAUNCHED=1")
+	cmd.Dir, _ = os.Getwd()
+
+	if err := cmd.Start(); err == nil {
+		os.Exit(0)
+	}
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
