@@ -56,13 +56,13 @@ jobs:
           windres --version
 
       - name: Download Mesa3D for Software OpenGL Fallback
-        shell: cmd
+        shell: pwsh
         run: |
-          curl -L -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/23.1.9/mesa3d-23.1.9-release-mingw.7z"
-          mkdir internal\platform\mesa_dlls
+          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/23.1.9/mesa3d-23.1.9-release-mingw.7z" -OutFile mesa.7z
+          New-Item -ItemType Directory -Force -Path internal/platform/mesa_dlls | Out-Null
           7z x mesa.7z -omesa_extracted -y
-          xcopy /S /Y mesa_extracted\x64\*.dll internal\platform\mesa_dlls\
-          dir internal\platform\mesa_dlls\
+          Get-ChildItem -Path mesa_extracted -Recurse -Filter "*.dll" | Where-Object { $_.FullName -match "x64" } | Copy-Item -Destination internal/platform/mesa_dlls/ -Force
+          Get-ChildItem internal/platform/mesa_dlls/
 
       - name: Resolve Go dependencies
         shell: pwsh
