@@ -1,0 +1,21 @@
+# Binaries and build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.syso
+*.zip
+/dist/
+/build/
+/bin/
+
+# Test artifacts
+*.test
+*.out
+
+# IDE / OS files
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store

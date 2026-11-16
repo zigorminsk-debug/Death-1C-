@@ -1,0 +1,187 @@
+name: Build Windows App
+run-name: "Build #${{ github.run_number }} — Death-1C (v1.0.${{ github.run_number }})"
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: "Windows x64 Build #${{ github.run_number }}"
+    runs-on: windows-latest
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      APP_VERSION: "1.0.${{ github.run_number }}"
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: false
+
+      - name: Ensure 64-bit MinGW-w64 toolchain (gcc & windres)
+        shell: pwsh
+        run: |
+          $candidateDirs = @(
+            "C:\mingw64\bin",
+            "C:\ProgramData\mingw64\mingw64\bin",
+            "C:\msys64\mingw64\bin"
+          )
+          if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+            foreach ($dir in $candidateDirs) {
+              if (Test-Path (Join-Path $dir "gcc.exe")) {
+                echo "$dir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+                $env:PATH = "$dir;$env:PATH"
+                break
+              }
+            }
+          }
+          if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+            choco install mingw --no-progress -y
+            refreshenv
+          }
+          gcc --version
+          windres --version
+
+      - name: Resolve Go dependencies
+        shell: pwsh
+        run: |
+          go mod tidy
+
+      - name: Run unit & UI tests
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "1"
+          go test -v ./internal/...
+
+      - name: Embed Windows icon and sequential build metadata (.syso)
+        shell: pwsh
+        run: |
+          $buildNum = [int]$env:BUILD_NUMBER
+          $rcContent = @"
+          #pragma code_page(65001)
+          1 ICON "assets/app.ico"
+
+          1 VERSIONINFO
+          FILEVERSION 1,0,0,$buildNum
+          PRODUCTVERSION 1,0,$buildNum,0
+          FILEOS 0x40004
+          FILETYPE 0x1
+          {
+            BLOCK "StringFileInfo"
+            {
+              BLOCK "041904B0"
+              {
+                VALUE "CompanyName", "Zakharevich Igor (ziv@csl.by, +375293371412)"
+                VALUE "FileDescription", "Death-1C - Cleanup duplicate 1C:Enterprise Server sessions"
+                VALUE "FileVersion", "1.0.0.$buildNum"
+                VALUE "InternalName", "Death-1C"
+                VALUE "LegalCopyright", "Zakharevich Igor | ziv@csl.by | +375293371412"
+                VALUE "OriginalFilename", "Death-1C.exe"
+                VALUE "ProductName", "Death-1C"
+                VALUE "ProductVersion", "$($env:APP_VERSION) (Build #$buildNum)"
+              }
+            }
+            BLOCK "VarFileInfo"
+            {
+              VALUE "Translation", 0x0419, 1200
+            }
+          }
+          "@
+          Set-Content -Path "cmd/death1c/app.rc" -Value $rcContent -Encoding ascii
+          windres -i "cmd/death1c/app.rc" -O coff -o "cmd/death1c/rsrc_windows_amd64.syso"
+          Remove-Item "cmd/death1c/app.rc" -Force
+
+      - name: Compile Windows GUI executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          $shortSha = ("$($env:GITHUB_SHA)").Substring(0, 7)
+          $buildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm UTC")
+
+          $env:CGO_ENABLED = "1"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+
+          $ldflags = "-s -w -H=windowsgui " +
+            "-X 'death1c/internal/version.Version=$($env:APP_VERSION)' " +
+            "-X 'death1c/internal/version.BuildNumber=$($env:BUILD_NUMBER)' " +
+            "-X 'death1c/internal/version.Commit=$shortSha' " +
+            "-X 'death1c/internal/version.BuildDate=$buildDate'"
+
+          $exeVersioned = "dist/Death-1C-build-$($env:BUILD_NUMBER).exe"
+          $exePlain     = "dist/Death-1C.exe"
+          $zipArchive   = "dist/Death-1C-v$($env:APP_VERSION)-build-$($env:BUILD_NUMBER)-windows-amd64.zip"
+
+          go build -trimpath "-ldflags=$ldflags" -o $exeVersioned ./cmd/death1c
+          Copy-Item $exeVersioned $exePlain -Force
+          Compress-Archive -Path $exePlain -DestinationPath $zipArchive -Force
+
+          $hash = (Get-FileHash $exeVersioned -Algorithm SHA256).Hash
+          "### Death-1C — Сборка #$($env:BUILD_NUMBER)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- **Версия:** ``v$($env:APP_VERSION)``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- **Порядковый номер сборки:** ``#$($env:BUILD_NUMBER)``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- **Файл:** ``Death-1C-build-$($env:BUILD_NUMBER).exe``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- **SHA-256:** ``$hash``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- **Разработчик:** Zakharevich Igor ([ziv@csl.by](mailto:ziv@csl.by), [+375293371412](tel:+375293371412))" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Upload Windows build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Death-1C-build-${{ github.run_number }}-windows-amd64
+          path: |
+            dist/Death-1C-build-${{ github.run_number }}.exe
+            dist/Death-1C-v1.0.${{ github.run_number }}-build-${{ github.run_number }}-windows-amd64.zip
+            go.sum
+          if-no-files-found: error
+
+      - name: Publish numbered GitHub Release
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "build-$($env:BUILD_NUMBER)"
+          $title = "Death-1C — Сборка #$($env:BUILD_NUMBER) (v$($env:APP_VERSION))"
+          $exeFile = "dist/Death-1C-build-$($env:BUILD_NUMBER).exe"
+          $zipFile = "dist/Death-1C-v$($env:APP_VERSION)-build-$($env:BUILD_NUMBER)-windows-amd64.zip"
+          $hash = (Get-FileHash $exeFile -Algorithm SHA256).Hash
+
+          $notes = @(
+            "## Death-1C — Сборка #$($env:BUILD_NUMBER) (v$($env:APP_VERSION))",
+            "",
+            "Windows-приложение (Go + Fyne) для просмотра активных сеансов и удаления старых задублированных сеансов на сервере **1С:Предприятие**.",
+            "",
+            "### Файлы сборки",
+            "- Death-1C-build-$($env:BUILD_NUMBER).exe — готовый исполняемый файл для Windows x64 (не требует установки)",
+            "- Death-1C-v$($env:APP_VERSION)-build-$($env:BUILD_NUMBER)-windows-amd64.zip — ZIP-архив",
+            "- **SHA-256:** $hash",
+            "",
+            "### Разработчик",
+            "- **Zakharevich Igor**",
+            "- E-mail: [ziv@csl.by](mailto:ziv@csl.by)",
+            "- Телефон: [+375293371412](tel:+375293371412)"
+          ) -join "`n"
+
+          $prereleaseFlag = @()
+          if ("${{ github.ref_name }}" -ne "main") {
+            $prereleaseFlag = @("--prerelease")
+          }
+
+          gh release create $tag $exeFile $zipFile `
+            --target "${{ github.sha }}" `
+            --title $title `
+            --notes $notes `
+            @prereleaseFlag
