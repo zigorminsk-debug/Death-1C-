@@ -59,8 +59,9 @@ jobs:
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/23.1.9/mesa3d-23.1.9-release-mingw.7z" -OutFile mesa.7z
+          7z x mesa.7z -omesa_extracted -y
           New-Item -ItemType Directory -Force -Path internal/platform/mesa_dlls | Out-Null
-          7z e mesa.7z -ointernal/platform/mesa_dlls x64/*.dll -y
+          Get-ChildItem -Path mesa_extracted -Recurse -Filter "*.dll" | Where-Object { $_.DirectoryName -match "x64" } | Copy-Item -Destination internal/platform/mesa_dlls/ -Force
           Get-ChildItem internal/platform/mesa_dlls/
 
       - name: Resolve Go dependencies
