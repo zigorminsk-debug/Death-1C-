@@ -58,10 +58,12 @@ jobs:
       - name: Download Mesa3D for Software OpenGL Fallback
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/23.1.9/mesa3d-23.1.9-release-mingw.7z" -OutFile mesa.7z
-          7z e mesa.7z x64/*.dll -y
+          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/23.1.9/mesa3d-23.1.9-release-msvc.7z" -OutFile mesa.7z
           New-Item -ItemType Directory -Force -Path internal/platform/mesa_dlls | Out-Null
-          Move-Item *.dll internal/platform/mesa_dlls/ -Force
+          7z e mesa.7z x64/*.dll -y -ointernal/platform/mesa_dlls
+          Copy-Item "C:\Windows\System32\vcruntime140.dll" -Destination internal/platform/mesa_dlls/ -ErrorAction SilentlyContinue
+          Copy-Item "C:\Windows\System32\vcruntime140_1.dll" -Destination internal/platform/mesa_dlls/ -ErrorAction SilentlyContinue
+          Copy-Item "C:\Windows\System32\msvcp140.dll" -Destination internal/platform/mesa_dlls/ -ErrorAction SilentlyContinue
           Get-ChildItem internal/platform/mesa_dlls/
 
       - name: Resolve Go dependencies
